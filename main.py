@@ -24,15 +24,22 @@ class SourceConfig:
     pattern: str
     regex: Optional[Pattern[str]]
     strip_syslog_hostname: bool
+    notifications_enabled: bool
+    notification_levels: Set[str]
 
 
 @dataclass
 class NotificationConfig:
-    enabled: bool
-    ntfy_url: Optional[str]
-    levels: Set[str]
+    ntfy_base_url: Optional[str]
+    topic: Optional[str]
     title_prefix: str
     auth_token: Optional[str]
+
+    @property
+    def ntfy_url(self) -> Optional[str]:
+        if not self.ntfy_base_url or not self.topic:
+            return None
+        return f"{self.ntfy_base_url.rstrip('/')}/{self.topic.lstrip('/')}"
 
 
 class LogForwarder:
@@ -50,7 +57,7 @@ class LogForwarder:
 
         self.update_seconds = 5
         self.sources: List[SourceConfig] = []
-        self.notifications = NotificationConfig(False, None, set(), APP_NAME, None)
+        self.notifications = NotificationConfig(None, None, APP_NAME, None)
 
     def load(self) -> None:
         parser = configparser.ConfigParser()
@@ -68,11 +75,15 @@ class LogForwarder:
         self.update_seconds = self.parse_duration(updatefreq)
 
         self.notifications = NotificationConfig(
-            enabled=parser.getboolean("Notification", "enabled", fallback=False),
-            ntfy_url=parser.get("Notification", "ntfy_url", fallback=None),
-            levels={lvl.strip().upper() for lvl in parser.get("Notification", "levels", fallback="ERROR,CRITICAL").split(",") if lvl.strip()},
+            ntfy_base_url=parser.get("Notification", "url", fallback="https://ntfy.sh"),
+            topic=parser.get("Notification", "topic", fallback=None),
             title_prefix=parser.get("Notification", "title_prefix", fallback=APP_NAME),
             auth_token=parser.get("Notification", "auth_token", fallback=None),
+        )
+
+        legacy_notifications_enabled = parser.getboolean("Notification", "enabled", fallback=False)
+        legacy_notification_levels = self.parse_levels(
+            parser.get("Notification", "levels", fallback="WARN,ERROR,CRITICAL")
         )
 
         reserved = {"General", "Notification"}
@@ -86,12 +97,26 @@ class LogForwarder:
             regex_raw = parser.get(section, "regex", fallback="").strip()
             compiled = re.compile(regex_raw) if regex_raw else None
             strip_syslog_hostname = parser.getboolean(section, "strip_syslog_hostname", fallback=True)
+            notifications_enabled = parser.getboolean(
+                section,
+                "enable_notifications",
+                fallback=legacy_notifications_enabled,
+            )
+            notification_levels = self.parse_levels(
+                parser.get(
+                    section,
+                    "notification_levels",
+                    fallback=",".join(sorted(legacy_notification_levels)),
+                )
+            )
             self.sources.append(
                 SourceConfig(
                     name=section,
                     pattern=pattern,
                     regex=compiled,
                     strip_syslog_hostname=strip_syslog_hostname,
+                    notifications_enabled=notifications_enabled,
+                    notification_levels=notification_levels,
                 )
             )
 
@@ -106,6 +131,16 @@ class LogForwarder:
         if value.endswith("s"):
             return max(1, int(value[:-1]))
         return max(1, int(value))
+
+    @staticmethod
+    def parse_levels(raw: str) -> Set[str]:
+        levels = set()
+        for level in raw.split(","):
+            cleaned = level.strip().upper()
+            if not cleaned:
+                continue
+            levels.add("WARN" if cleaned == "WARNING" else cleaned)
+        return levels
 
     def run(self) -> None:
         self.register_signals()
@@ -132,7 +167,7 @@ class LogForwarder:
 
     def print_startup_summary(self) -> None:
         self.log("INFO", "general", f"Starting {APP_NAME} with config={self.config_path}")
-        self.log("INFO", "general", f"updatefreq={self.update_seconds}s, notifications_enabled={self.notifications.enabled}")
+        self.log("INFO", "general", f"updatefreq={self.update_seconds}s, ntfy_url={self.notifications.ntfy_url or 'disabled'}")
         for source in self.sources:
             paths = sorted(glob.glob(source.pattern))
             if paths:
@@ -193,7 +228,7 @@ class LogForwarder:
         level = self.detect_level(normalized_line)
         self.log(level, source.name, normalized_line)
 
-        if self.notifications.enabled and self.notifications.ntfy_url and level in self.notifications.levels:
+        if source.notifications_enabled and self.notifications.ntfy_url and level in source.notification_levels:
             self.notify_ntfy(level, source.name, normalized_line)
 
     def detect_level(self, line: str) -> str:
