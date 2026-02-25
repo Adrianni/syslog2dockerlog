@@ -13,9 +13,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Pattern, Set, Tuple
 
-APP_NAME = "docklog-forwarder"
+APP_NAME = "system-log-to-docker"
 DEFAULT_CONFIG_PATH = f"/etc/{APP_NAME}/{APP_NAME}.config"
-HEALTH_FILE = "/tmp/docklog-forwarder.health"
+HEALTH_FILE = f"/tmp/{APP_NAME}.health"
 
 
 @dataclass
@@ -23,6 +23,7 @@ class SourceConfig:
     name: str
     pattern: str
     regex: Optional[Pattern[str]]
+    strip_syslog_hostname: bool
 
 
 @dataclass
@@ -36,6 +37,9 @@ class NotificationConfig:
 
 class LogForwarder:
     LEVEL_PATTERN = re.compile(r"\b(CRITICAL|ERROR|WARN(?:ING)?|INFO)\b", re.IGNORECASE)
+    SYSLOG_PREFIX_PATTERN = re.compile(
+        r"^(?P<stamp>[A-Z][a-z]{2}\s+\d{1,2}\s+\d\d:\d\d:\d\d)\s+(?P<host>\S+)\s+(?P<msg>.+)$"
+    )
 
     def __init__(self, config_path: str):
         self.config_path = config_path
@@ -44,7 +48,7 @@ class LogForwarder:
         self.key_to_path: Dict[Tuple[int, int], str] = {}
         self.touched_keys: Set[Tuple[int, int]] = set()
 
-        self.update_seconds = 60
+        self.update_seconds = 5
         self.sources: List[SourceConfig] = []
         self.notifications = NotificationConfig(False, None, set(), APP_NAME, None)
 
@@ -60,7 +64,7 @@ class LogForwarder:
         except AttributeError:
             pass
 
-        updatefreq = parser.get("General", "updatefreq", fallback="1min")
+        updatefreq = parser.get("General", "updatefreq", fallback="5s")
         self.update_seconds = self.parse_duration(updatefreq)
 
         self.notifications = NotificationConfig(
@@ -81,7 +85,15 @@ class LogForwarder:
                 continue
             regex_raw = parser.get(section, "regex", fallback="").strip()
             compiled = re.compile(regex_raw) if regex_raw else None
-            self.sources.append(SourceConfig(name=section, pattern=pattern, regex=compiled))
+            strip_syslog_hostname = parser.getboolean(section, "strip_syslog_hostname", fallback=True)
+            self.sources.append(
+                SourceConfig(
+                    name=section,
+                    pattern=pattern,
+                    regex=compiled,
+                    strip_syslog_hostname=strip_syslog_hostname,
+                )
+            )
 
         if not self.sources:
             raise ValueError("No log sources found in config. Add at least one section with input=... pattern.")
@@ -164,15 +176,25 @@ class LogForwarder:
             self.offsets.pop(key, None)
             self.key_to_path.pop(key, None)
 
+    def normalize_line(self, source: SourceConfig, line: str) -> str:
+        if not source.strip_syslog_hostname:
+            return line
+
+        match = self.SYSLOG_PREFIX_PATTERN.match(line)
+        if not match:
+            return line
+        return f"{match.group('stamp')} {match.group('msg')}"
+
     def emit_line(self, source: SourceConfig, line: str) -> None:
         if source.regex and not source.regex.search(line):
             return
 
-        level = self.detect_level(line)
-        self.log(level, source.name, line)
+        normalized_line = self.normalize_line(source, line)
+        level = self.detect_level(normalized_line)
+        self.log(level, source.name, normalized_line)
 
         if self.notifications.enabled and self.notifications.ntfy_url and level in self.notifications.levels:
-            self.notify_ntfy(level, source.name, line)
+            self.notify_ntfy(level, source.name, normalized_line)
 
     def detect_level(self, line: str) -> str:
         found = self.LEVEL_PATTERN.search(line)
