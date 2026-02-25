@@ -8,7 +8,6 @@ import signal
 import sys
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -16,7 +15,7 @@ from typing import Dict, List, Optional, Pattern, Set, Tuple
 
 APP_NAME = "system-log-to-docker"
 DEFAULT_CONFIG_PATH = f"/etc/{APP_NAME}/{APP_NAME}.config"
-DEFAULT_HEALTH_FILE = f"/run/{APP_NAME}/{APP_NAME}.health"
+HEALTH_FILE = f"/tmp/{APP_NAME}.health"
 
 
 @dataclass
@@ -54,7 +53,6 @@ class LogForwarder:
 
     def __init__(self, config_path: str):
         self.config_path = config_path
-        self.health_file_path = os.environ.get("HEALTH_FILE", DEFAULT_HEALTH_FILE)
         self.shutdown_requested = False
         self.offsets: Dict[Tuple[int, int], int] = {}
         self.key_to_path: Dict[Tuple[int, int], str] = {}
@@ -63,18 +61,6 @@ class LogForwarder:
         self.update_seconds = 5
         self.sources: List[SourceConfig] = []
         self.notifications = NotificationConfig(None, None, None, APP_NAME, None)
-
-    @staticmethod
-    def validate_notification_url(raw_url: Optional[str]) -> Optional[str]:
-        if not raw_url:
-            return None
-
-        parsed = urllib.parse.urlparse(raw_url)
-        if parsed.scheme not in {"http", "https"}:
-            raise ValueError("Notification URL must use http or https")
-        if not parsed.netloc:
-            raise ValueError("Notification URL must include a hostname")
-        return raw_url
 
     def load(self) -> None:
         parser = configparser.ConfigParser()
@@ -98,8 +84,6 @@ class LogForwarder:
             title_prefix=parser.get("Notification", "title_prefix", fallback=APP_NAME),
             auth_token=parser.get("Notification", "auth_token", fallback=None),
         )
-        self.notifications.ntfy_base_url = self.validate_notification_url(self.notifications.ntfy_base_url)
-        self.notifications.ntfy_url_override = self.validate_notification_url(self.notifications.ntfy_url_override)
 
         legacy_notifications_enabled = parser.getboolean("Notification", "enabled", fallback=False)
         legacy_notification_levels = self.parse_levels(
@@ -316,7 +300,7 @@ class LogForwarder:
         )
 
         try:
-            with urllib.request.urlopen(request, timeout=10):  # nosec B310
+            with urllib.request.urlopen(request, timeout=10):
                 return
         except urllib.error.URLError as exc:
             self.log("ERROR", "notification", f"Failed to deliver ntfy notification: {exc}")
@@ -328,11 +312,7 @@ class LogForwarder:
             "updatefreq": self.update_seconds,
             "sources": [source.name for source in self.sources],
         }
-        health_dir = os.path.dirname(self.health_file_path)
-        if health_dir:
-            os.makedirs(health_dir, mode=0o750, exist_ok=True)
-
-        with open(self.health_file_path, "w", encoding="utf-8") as fh:
+        with open(HEALTH_FILE, "w", encoding="utf-8") as fh:
             json.dump(payload, fh)
 
 
