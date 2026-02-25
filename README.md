@@ -66,8 +66,8 @@ notification_levels=ERROR,CRITICAL
   - `input`: File path or glob pattern
   - `regex`: Optional regex filtering on line content
   - `strip_syslog_hostname`: If `true`, strips hostname from classic syslog lines like `Feb 25 18:54:47 test systemd[1]: ...`
-  - `enable_notifications`: `true/false` per source (also accepts aliases: `notifications_enabled`, `notification_enabled`, `enabled`)
-  - `notification_levels`: Comma-separated list of levels that trigger notifications for this source (also accepts aliases: `notifications_levels`, `levels`)
+  - `enable_notifications`: `true/false` per source
+  - `notification_levels`: Comma-separated list of levels that trigger notifications for this source
 
 ## Startup and tracking overview
 
