@@ -1,0 +1,16 @@
+services:
+  system-log-to-docker:
+    build: .
+    container_name: system-log-to-docker
+    volumes:
+      - /var/log:/var/log:ro
+      - ./config/system-log-to-docker.config:/etc/system-log-to-docker/system-log-to-docker.config:ro
+    environment:
+      - HEALTH_MAX_AGE_SECONDS=180
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

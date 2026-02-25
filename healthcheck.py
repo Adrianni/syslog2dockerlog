@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 import json
 import os
-import sys
 import time
 
-HEALTH_FILE = "/tmp/docklog-forwarder.health"
+APP_NAME = "system-log-to-docker"
+HEALTH_FILE = f"/tmp/{APP_NAME}.health"
 MAX_AGE_SECONDS = int(os.environ.get("HEALTH_MAX_AGE_SECONDS", "180"))
 
 
