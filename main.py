@@ -101,15 +101,17 @@ class LogForwarder:
             regex_raw = parser.get(section, "regex", fallback="").strip()
             compiled = re.compile(regex_raw) if regex_raw else None
             strip_syslog_hostname = parser.getboolean(section, "strip_syslog_hostname", fallback=True)
-            notifications_enabled = parser.getboolean(
+            notifications_enabled = self.get_bool_with_aliases(
+                parser,
                 section,
-                "enable_notifications",
+                ["enable_notifications", "notifications_enabled", "notification_enabled", "enabled"],
                 fallback=legacy_notifications_enabled,
             )
             notification_levels = self.parse_levels(
-                parser.get(
+                self.get_str_with_aliases(
+                    parser,
                     section,
-                    "notification_levels",
+                    ["notification_levels", "notifications_levels", "levels"],
                     fallback=",".join(sorted(legacy_notification_levels)),
                 )
             )
@@ -145,6 +147,30 @@ class LogForwarder:
                 continue
             levels.add("WARN" if cleaned == "WARNING" else cleaned)
         return levels
+
+    @staticmethod
+    def get_bool_with_aliases(
+        parser: configparser.ConfigParser,
+        section: str,
+        option_names: List[str],
+        fallback: bool,
+    ) -> bool:
+        for option in option_names:
+            if parser.has_option(section, option):
+                return parser.getboolean(section, option)
+        return fallback
+
+    @staticmethod
+    def get_str_with_aliases(
+        parser: configparser.ConfigParser,
+        section: str,
+        option_names: List[str],
+        fallback: str,
+    ) -> str:
+        for option in option_names:
+            if parser.has_option(section, option):
+                return parser.get(section, option)
+        return fallback
 
     def run(self) -> None:
         self.register_signals()
