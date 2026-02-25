@@ -172,8 +172,30 @@ class LogForwarder:
 
     def print_startup_summary(self) -> None:
         self.log("INFO", "general", f"Starting {APP_NAME} with config={self.config_path}")
-        source_notifications_enabled = any(source.notifications_enabled for source in self.sources)
-        self.log("INFO", "general", f"updatefreq={self.update_seconds}s, notifications_enabled={source_notifications_enabled}, ntfy_url={self.notifications.ntfy_url or 'disabled'}")
+        enabled_sources = [source for source in self.sources if source.notifications_enabled]
+        source_notifications_enabled = bool(enabled_sources)
+        self.log(
+            "INFO",
+            "general",
+            f"updatefreq={self.update_seconds}s, notifications_enabled={source_notifications_enabled}, ntfy_url={self.notifications.ntfy_url or 'disabled'}",
+        )
+
+        if enabled_sources:
+            enabled_summary = "; ".join(
+                f"{source.name}({','.join(sorted(source.notification_levels)) or 'none'})"
+                for source in enabled_sources
+            )
+            self.log("INFO", "general", f"notification_sources_enabled={enabled_summary}")
+        else:
+            self.log("WARN", "general", "No sources have notifications enabled")
+
+        if source_notifications_enabled and not self.notifications.ntfy_url:
+            self.log(
+                "WARN",
+                "notification",
+                "Notifications are enabled for one or more sources, but ntfy_url is not configured",
+            )
+
         for source in self.sources:
             self.log(
                 "INFO",

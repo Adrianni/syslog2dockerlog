@@ -73,6 +73,12 @@ notification_levels=ERROR,CRITICAL
 
 At startup, the application logs which files are matched/tracked for each section. If no files match a pattern yet, a `WARN` message is logged.
 
+It also logs a notification summary, including:
+
+- Global notification readiness (`notifications_enabled=true/false`) based on whether at least one source has `enable_notifications=true`
+- Which sources have notifications enabled, and which `notification_levels` are active for each source
+- A warning when source notifications are enabled but ntfy URL/topic is not configured
+
 ## Docker Compose example
 
 ```yaml
