@@ -4,7 +4,7 @@ import os
 import time
 
 APP_NAME = "system-log-to-docker"
-HEALTH_FILE = f"/tmp/{APP_NAME}.health"
+HEALTH_FILE = os.environ.get("HEALTH_FILE", f"/run/{APP_NAME}/health.json")
 MAX_AGE_SECONDS = int(os.environ.get("HEALTH_MAX_AGE_SECONDS", "180"))
 
 

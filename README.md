@@ -62,6 +62,7 @@ notification_levels=ERROR,CRITICAL
   - `ntfy_url`: Optional full topic URL (legacy/override, e.g. `https://ntfy.sh/my-alerts`)
   - `auth_token`: Optional bearer token
   - `title_prefix`: Prefix used for notification titles
+  - `allow_insecure_http`: Set to `true` to permit plain HTTP ntfy endpoints (default `false`; HTTPS only).
 - `[SourceName]`
   - `input`: File path or glob pattern
   - `regex`: Optional regex filtering on line content
@@ -91,6 +92,7 @@ services:
       - ./config/system-log-to-docker.config:/etc/system-log-to-docker/system-log-to-docker.config:ro
     environment:
       - HEALTH_MAX_AGE_SECONDS=180
+      - HEALTH_FILE=/run/system-log-to-docker/health.json
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "/app/healthcheck.py"]

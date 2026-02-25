@@ -6,16 +6,18 @@ import os
 import re
 import signal
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Pattern, Set, Tuple
+from urllib.parse import urlparse
 
 APP_NAME = "system-log-to-docker"
 DEFAULT_CONFIG_PATH = f"/etc/{APP_NAME}/{APP_NAME}.config"
-HEALTH_FILE = f"/tmp/{APP_NAME}.health"
+HEALTH_FILE = os.environ.get("HEALTH_FILE", f"/run/{APP_NAME}/health.json")
 
 
 @dataclass
@@ -35,14 +37,26 @@ class NotificationConfig:
     ntfy_url_override: Optional[str]
     title_prefix: str
     auth_token: Optional[str]
+    allow_insecure_http: bool
 
     @property
     def ntfy_url(self) -> Optional[str]:
+        raw_url: Optional[str]
         if self.ntfy_url_override:
-            return self.ntfy_url_override
-        if not self.ntfy_base_url or not self.topic:
+            raw_url = self.ntfy_url_override
+        elif self.ntfy_base_url and self.topic:
+            raw_url = f"{self.ntfy_base_url.rstrip('/')}/{self.topic.lstrip('/')}"
+        else:
             return None
-        return f"{self.ntfy_base_url.rstrip('/')}/{self.topic.lstrip('/')}"
+
+        parsed = urlparse(raw_url)
+        if parsed.scheme not in {"https", "http"}:
+            return None
+        if parsed.scheme == "http" and not self.allow_insecure_http:
+            return None
+        if not parsed.netloc:
+            return None
+        return raw_url
 
 
 class LogForwarder:
@@ -60,7 +74,7 @@ class LogForwarder:
 
         self.update_seconds = 5
         self.sources: List[SourceConfig] = []
-        self.notifications = NotificationConfig(None, None, None, APP_NAME, None)
+        self.notifications = NotificationConfig(None, None, None, APP_NAME, None, False)
 
     def load(self) -> None:
         parser = configparser.ConfigParser()
@@ -83,6 +97,7 @@ class LogForwarder:
             ntfy_url_override=parser.get("Notification", "ntfy_url", fallback=None),
             title_prefix=parser.get("Notification", "title_prefix", fallback=APP_NAME),
             auth_token=parser.get("Notification", "auth_token", fallback=None),
+            allow_insecure_http=parser.getboolean("Notification", "allow_insecure_http", fallback=False),
         )
 
         legacy_notifications_enabled = parser.getboolean("Notification", "enabled", fallback=False)
@@ -99,7 +114,10 @@ class LogForwarder:
             if not pattern:
                 continue
             regex_raw = parser.get(section, "regex", fallback="").strip()
-            compiled = re.compile(regex_raw) if regex_raw else None
+            try:
+                compiled = re.compile(regex_raw) if regex_raw else None
+            except re.error as exc:
+                raise ValueError(f"Invalid regex for section '{section}': {exc}") from exc
             strip_syslog_hostname = parser.getboolean(section, "strip_syslog_hostname", fallback=True)
             notifications_enabled = parser.getboolean(
                 section,
@@ -300,7 +318,7 @@ class LogForwarder:
         )
 
         try:
-            with urllib.request.urlopen(request, timeout=10):
+            with urllib.request.urlopen(request, timeout=10):  # nosec B310 - URL scheme validated in NotificationConfig.ntfy_url
                 return
         except urllib.error.URLError as exc:
             self.log("ERROR", "notification", f"Failed to deliver ntfy notification: {exc}")
@@ -312,8 +330,18 @@ class LogForwarder:
             "updatefreq": self.update_seconds,
             "sources": [source.name for source in self.sources],
         }
-        with open(HEALTH_FILE, "w", encoding="utf-8") as fh:
-            json.dump(payload, fh)
+        directory = os.path.dirname(HEALTH_FILE) or "."
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        temp_path = ""
+        fd, temp_path = tempfile.mkstemp(prefix=f".{APP_NAME}.", dir=directory)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(payload, fh)
+            os.chmod(temp_path, 0o600)
+            os.replace(temp_path, HEALTH_FILE)
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
 
 
 def main() -> int:
