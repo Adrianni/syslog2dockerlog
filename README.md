@@ -13,7 +13,7 @@ This makes host logs visible through:
 - Optional regex filtering per log source
 - Automatic level detection in output: `INFO`, `WARN`, `ERROR`, `CRITICAL`
 - Optional hostname stripping for classic syslog lines (so hostnames like `test` are not repeated in every message)
-- NTFY notifications with per-source enable/disable and level filtering
+- NTFY notifications with filtering by selected levels
 - Periodic heartbeat/health status
 - Built-in Docker image `HEALTHCHECK`
 
@@ -31,24 +31,21 @@ tz=Europe/Oslo
 updatefreq=5s
 
 [Notification]
-url=https://ntfy.sh
-topic=your-topic
+enabled=false
+ntfy_url=https://ntfy.sh/your-topic
 auth_token=
+levels=WARN,ERROR,CRITICAL
 title_prefix=system-log-to-docker
 
 [Syslog]
 input=/var/log/syslog*
 regex=
 strip_syslog_hostname=true
-enable_notifications=false
-notification_levels=WARN,ERROR,CRITICAL
 
 [PHP-fpm]
 input=/var/log/php.log
 # regex=
 # strip_syslog_hostname=false
-enable_notifications=true
-notification_levels=ERROR,CRITICAL
 ```
 
 ### Explanation of key fields
@@ -57,16 +54,14 @@ notification_levels=ERROR,CRITICAL
   - `tz`: Time zone used for log timestamps
   - `updatefreq`: Polling interval (`5`, `5s`, `1min`). Default is `5s`.
 - `[Notification]`
-  - `url`: Base ntfy URL (for example `https://ntfy.sh`)
-  - `topic`: ntfy topic name (for example `my-alerts`)
+  - `enabled`: `true/false`
+  - `ntfy_url`: Full URL to the ntfy topic
   - `auth_token`: Optional bearer token
-  - `title_prefix`: Prefix used for notification titles
+  - `levels`: Comma-separated list of levels that trigger notifications
 - `[SourceName]`
   - `input`: File path or glob pattern
   - `regex`: Optional regex filtering on line content
   - `strip_syslog_hostname`: If `true`, strips hostname from classic syslog lines like `Feb 25 18:54:47 test systemd[1]: ...`
-  - `enable_notifications`: `true/false` per source
-  - `notification_levels`: Comma-separated list of levels that trigger notifications for this source
 
 ## Startup and tracking overview
 
