@@ -1,28 +1,28 @@
 # docklog-forwarder
 
-`docklog-forwarder` er en Python-basert Docker-applikasjon som leser systemlogger fra host (via mount) og skriver dem videre til containerens stdout.
+`docklog-forwarder` is a Python-based Docker application that reads system logs from the host (through a mounted volume) and forwards them to the container's stdout.
 
-Dette gjør at loggene kan leses med:
+This makes logs available through:
 
 - `docker compose logs`
-- dockmon eller andre verktøy som leser container-logger
+- dockmon or other tools that read container logs
 
-## Hovedfunksjoner
+## Main features
 
-- Leser én eller flere loggfiler, inkludert glob-mønstre (`/var/log/syslog*`)
-- Valgfri regex-filtrering per loggkilde
-- Automatisk nivå-deteksjon i output: `INFO`, `WARN`, `ERROR`, `CRITICAL`
-- NTFY-notifikasjoner med filtrering på ønskede nivåer
-- Periodisk heartbeat/health-status
-- Innebygd `HEALTHCHECK` i Docker-image
+- Reads one or more log files, including glob patterns (`/var/log/syslog*`)
+- Optional regex filtering per log source
+- Automatic level detection in output: `INFO`, `WARN`, `ERROR`, `CRITICAL`
+- NTFY notifications with filtering by selected levels
+- Periodic heartbeat/health status
+- Built-in Docker image `HEALTHCHECK`
 
-## Konfigurasjon
+## Configuration
 
-Konfigurasjonsfil i container:
+Configuration file inside the container:
 
 `/etc/docklog-forwarder/docklog-forwarder.config`
 
-Eksempel (`config/docklog-forwarder.config`):
+Example (`config/docklog-forwarder.config`):
 
 ```ini
 [General]
@@ -45,25 +45,25 @@ input=/var/log/php.log
 # regex=
 ```
 
-### Forklaring av nøkkelfelt
+### Explanation of key fields
 
 - `[General]`
-  - `tz`: Tidssone brukt i loggtidsstempel
-  - `updatefreq`: Polling-intervall (`60`, `30s`, `1min`)
+  - `tz`: Time zone used for log timestamps
+  - `updatefreq`: Polling interval (`60`, `30s`, `1min`)
 - `[Notification]`
   - `enabled`: `true/false`
-  - `ntfy_url`: Full URL til ntfy topic
-  - `auth_token`: Valgfri bearer token
-  - `levels`: Komma-separert liste av nivåer som skal trigge notifikasjon
-- `[KildeNavn]`
-  - `input`: filsti eller glob-mønster
-  - `regex`: valgfri regex-filtering på linjeinnhold
+  - `ntfy_url`: Full URL to the ntfy topic
+  - `auth_token`: Optional bearer token
+  - `levels`: Comma-separated list of levels that trigger notifications
+- `[SourceName]`
+  - `input`: file path or glob pattern
+  - `regex`: optional regex filtering on line content
 
-## Oppstart og tracking-oversikt
+## Startup and tracking overview
 
-Ved oppstart logger applikasjonen hvilke filer som matches/tracked for hver seksjon. Hvis ingen filer matcher et mønster ennå, logges en `WARN`.
+At startup, the application logs which files are matched/tracked for each section. If no files match a pattern yet, a `WARN` message is logged.
 
-## Docker Compose eksempel
+## Docker Compose example
 
 ```yaml
 services:
@@ -84,7 +84,7 @@ services:
       start_period: 20s
 ```
 
-## Bygg og kjør
+## Build and run
 
 ```bash
 docker build -t docklog-forwarder .
