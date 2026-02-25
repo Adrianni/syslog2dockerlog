@@ -146,6 +146,7 @@ class LogForwarder:
             levels.add("WARN" if cleaned == "WARNING" else cleaned)
         return levels
 
+
     def run(self) -> None:
         self.register_signals()
         self.load()
@@ -171,7 +172,8 @@ class LogForwarder:
 
     def print_startup_summary(self) -> None:
         self.log("INFO", "general", f"Starting {APP_NAME} with config={self.config_path}")
-        self.log("INFO", "general", f"updatefreq={self.update_seconds}s, ntfy_url={self.notifications.ntfy_url or 'disabled'}")
+        source_notifications_enabled = any(source.notifications_enabled for source in self.sources)
+        self.log("INFO", "general", f"updatefreq={self.update_seconds}s, notifications_enabled={source_notifications_enabled}, ntfy_url={self.notifications.ntfy_url or 'disabled'}")
         for source in self.sources:
             self.log(
                 "INFO",
