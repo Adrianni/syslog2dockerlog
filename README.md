@@ -12,7 +12,7 @@ This makes host logs visible through:
 - Reads one or more log files, including glob patterns (`/var/log/syslog*`)
 - Optional regex filtering per log source
 - Automatic level detection in output: `INFO`, `WARN`, `ERROR`, `CRITICAL`
-- Optional hostname stripping for classic syslog lines (so hostnames like `test` are not repeated in every message)
+- Global hostname column control with normalized output formatting
 - NTFY notifications with per-source enable/disable and level filtering
 - Periodic heartbeat/health status
 - Built-in Docker image `HEALTHCHECK`
@@ -29,24 +29,24 @@ Example (`config/syslog2dockerlog.config`):
 [General]
 tz=Europe/Oslo
 updatefreq=5s
+hostname_output=true
 
 [Notification]
 url=https://ntfy.sh
 topic=your-topic
 auth_token=
 title_prefix=syslog2dockerlog
+format=yaml
 
 [Syslog]
 input=/var/log/syslog*
 regex=
-strip_syslog_hostname=true
 enable_notifications=false
 notification_levels=WARN,ERROR,CRITICAL
 
 [PHP-fpm]
 input=/var/log/php.log
 # regex=
-# strip_syslog_hostname=false
 enable_notifications=true
 notification_levels=ERROR,CRITICAL
 ```
@@ -56,6 +56,7 @@ notification_levels=ERROR,CRITICAL
 - `[General]`
   - `tz`: Time zone used for log timestamps
   - `updatefreq`: Polling interval (`5`, `5s`, `1min`). Default is `5s`.
+  - `hostname_output`: `true/false` to include a dedicated hostname column in all emitted lines. If disabled, hostnames from syslog-style lines are stripped and a placeholder is used.
 - `[Notification]`
   - `url`: Base ntfy URL (for example `https://ntfy.sh`)
   - `topic`: ntfy topic name (for example `my-alerts`)
@@ -63,10 +64,10 @@ notification_levels=ERROR,CRITICAL
   - `auth_token`: Optional bearer token
   - `title_prefix`: Prefix used for notification titles
   - `allow_insecure_http`: Set to `true` to permit plain HTTP ntfy endpoints (default `false`; HTTPS only).
+  - `format`: Notification body format, either `yaml` (default) or `json`.
 - `[SourceName]`
   - `input`: File path or glob pattern
   - `regex`: Optional regex filtering on line content
-  - `strip_syslog_hostname`: If `true`, strips hostname from classic syslog lines like `Feb 25 18:54:47 test systemd[1]: ...`
   - `enable_notifications`: `true/false` per source
   - `notification_levels`: Comma-separated list of levels that trigger notifications for this source
 

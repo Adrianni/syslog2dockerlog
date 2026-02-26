@@ -5,6 +5,7 @@ import json
 import os
 import re
 import signal
+import socket
 import sys
 import tempfile
 import time
@@ -25,7 +26,6 @@ class SourceConfig:
     name: str
     pattern: str
     regex: Optional[Pattern[str]]
-    strip_syslog_hostname: bool
     notifications_enabled: bool
     notification_levels: Set[str]
 
@@ -38,6 +38,7 @@ class NotificationConfig:
     title_prefix: str
     auth_token: Optional[str]
     allow_insecure_http: bool
+    message_format: str
 
     @property
     def ntfy_url(self) -> Optional[str]:
@@ -74,7 +75,9 @@ class LogForwarder:
 
         self.update_seconds = 5
         self.sources: List[SourceConfig] = []
-        self.notifications = NotificationConfig(None, None, None, APP_NAME, None, False)
+        self.notifications = NotificationConfig(None, None, None, APP_NAME, None, False, "yaml")
+        self.hostname_output = True
+        self.server_hostname = socket.gethostname()
 
     def load(self) -> None:
         parser = configparser.ConfigParser()
@@ -90,6 +93,11 @@ class LogForwarder:
 
         updatefreq = parser.get("General", "updatefreq", fallback="5s")
         self.update_seconds = self.parse_duration(updatefreq)
+        self.hostname_output = parser.getboolean("General", "hostname_output", fallback=True)
+
+        message_format = parser.get("Notification", "format", fallback="yaml").strip().lower() or "yaml"
+        if message_format not in {"yaml", "json"}:
+            raise ValueError("[Notification] format must be either 'yaml' or 'json'")
 
         self.notifications = NotificationConfig(
             ntfy_base_url=parser.get("Notification", "url", fallback="https://ntfy.sh"),
@@ -98,6 +106,7 @@ class LogForwarder:
             title_prefix=parser.get("Notification", "title_prefix", fallback=APP_NAME),
             auth_token=parser.get("Notification", "auth_token", fallback=None),
             allow_insecure_http=parser.getboolean("Notification", "allow_insecure_http", fallback=False),
+            message_format=message_format,
         )
 
         legacy_notifications_enabled = parser.getboolean("Notification", "enabled", fallback=False)
@@ -118,7 +127,6 @@ class LogForwarder:
                 compiled = re.compile(regex_raw) if regex_raw else None
             except re.error as exc:
                 raise ValueError(f"Invalid regex for section '{section}': {exc}") from exc
-            strip_syslog_hostname = parser.getboolean(section, "strip_syslog_hostname", fallback=True)
             notifications_enabled = parser.getboolean(
                 section,
                 "enable_notifications",
@@ -136,7 +144,6 @@ class LogForwarder:
                     name=section,
                     pattern=pattern,
                     regex=compiled,
-                    strip_syslog_hostname=strip_syslog_hostname,
                     notifications_enabled=notifications_enabled,
                     notification_levels=notification_levels,
                 )
@@ -262,25 +269,25 @@ class LogForwarder:
             self.offsets.pop(key, None)
             self.key_to_path.pop(key, None)
 
-    def normalize_line(self, source: SourceConfig, line: str) -> str:
-        if not source.strip_syslog_hostname:
-            return line
-
+    def normalize_line(self, line: str) -> Tuple[str, str, str]:
         match = self.SYSLOG_PREFIX_PATTERN.match(line)
         if not match:
-            return line
-        return f"{match.group('stamp')} {match.group('msg')}"
+            hostname = self.server_hostname if self.hostname_output else "-"
+            return "-", hostname, line
+
+        hostname = match.group("host") if self.hostname_output else "-"
+        return match.group("stamp"), hostname, match.group("msg")
 
     def emit_line(self, source: SourceConfig, line: str) -> None:
         if source.regex and not source.regex.search(line):
             return
 
-        normalized_line = self.normalize_line(source, line)
+        event_timestamp, hostname, normalized_line = self.normalize_line(line)
         level = self.detect_level(normalized_line)
-        self.log(level, source.name, normalized_line)
+        self.log(level, source.name, normalized_line, event_timestamp=event_timestamp, hostname=hostname)
 
         if source.notifications_enabled and self.notifications.ntfy_url and level in source.notification_levels:
-            self.notify_ntfy(level, source.name, normalized_line)
+            self.notify_ntfy(level, source.name, normalized_line, event_timestamp, hostname)
 
     def detect_level(self, line: str) -> str:
         found = self.LEVEL_PATTERN.search(line)
@@ -292,25 +299,44 @@ class LogForwarder:
             return "WARN"
         return level
 
-    def log(self, level: str, source: str, message: str) -> None:
+    def log(
+        self,
+        level: str,
+        source: str,
+        message: str,
+        event_timestamp: str = "-",
+        hostname: str = "-",
+    ) -> None:
         timestamp = datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
-        print(f"{timestamp} [{level}] [{source}] {message}", flush=True)
+        print(
+            f"{timestamp} [{level:<8}] [{source:<16}] [{event_timestamp:<15}] [{hostname:<20}] {message}",
+            flush=True,
+        )
 
-    def notify_ntfy(self, level: str, source: str, message: str) -> None:
-        payload = json.dumps({
+    def notify_ntfy(self, level: str, source: str, message: str, event_timestamp: str, hostname: str) -> None:
+        notification_event = {
             "app": APP_NAME,
             "source": source,
             "level": level,
             "message": message,
+            "event_timestamp": event_timestamp,
+            "hostname": hostname,
             "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        }).encode("utf-8")
+        }
+
+        if self.notifications.message_format == "json":
+            payload = json.dumps(notification_event).encode("utf-8")
+            content_type = "application/json"
+        else:
+            payload = self.to_yaml(notification_event).encode("utf-8")
+            content_type = "application/x-yaml"
 
         request = urllib.request.Request(
             self.notifications.ntfy_url,
             data=payload,
             method="POST",
             headers={
-                "Content-Type": "application/json",
+                "Content-Type": content_type,
                 "Title": f"{self.notifications.title_prefix} {level} [{source}]",
                 "Tags": level.lower(),
                 **({"Authorization": f"Bearer {self.notifications.auth_token}"} if self.notifications.auth_token else {}),
@@ -322,6 +348,14 @@ class LogForwarder:
                 return
         except urllib.error.URLError as exc:
             self.log("ERROR", "notification", f"Failed to deliver ntfy notification: {exc}")
+
+    @staticmethod
+    def to_yaml(payload: Dict[str, str]) -> str:
+        lines = []
+        for key, value in payload.items():
+            escaped = str(value).replace("'", "''")
+            lines.append(f"{key}: '{escaped}'")
+        return "\n".join(lines) + "\n"
 
     def write_health(self) -> None:
         payload = {
